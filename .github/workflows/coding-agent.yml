@@ -1,0 +1,33 @@
+# Deploy II "Coding agent" tab: install the pinned skill, then run what the prompt asks the agent to add (workflow tirith-ci-agent0)
+name: 6 Coding agent (skill install + prompt's check)
+on:
+  push:
+    branches: [qa/tirith-ci-flows]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  skill-install:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -fsSL https://raw.githubusercontent.com/StackGuardian/tirith/f8bfac4d0301cd7ea10b3097ae50e12630a63a89/documentation/static/skill.sh | sh -s -- --ref 1.2.1
+      - run: find ~ -maxdepth 4 -path '*skills*' -newer /etc/hostname 2>/dev/null | head -50; ls -la ~/.claude/skills ~/.agents/skills 2>/dev/null || true
+  prompt-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - run: terraform init -input=false
+      - run: terraform plan -out=tfplan -input=false && terraform show -json tfplan > plan.json
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
+          pip install "git+https://github.com/StackGuardian/tirith.git@1.2.1"
+          tirith platform check --workflow-id tirith-ci-agent0 --input-path plan.json --fail-on-error
+        env:
+          SG_API_TOKEN: ${{ secrets.SG_API_TOKEN }}
+          SG_ORG: demo-org
+          SG_BASE_URL: https://testapi.qa.stackguardian.io/api/v1
+          SG_DASHBOARD_URL: https://dash.qa.stackguardian.io
+      - run: terraform apply tfplan

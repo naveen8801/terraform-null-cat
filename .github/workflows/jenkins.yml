@@ -1,0 +1,35 @@
+# Deploy II "Jenkins" tab: Plan / Policy gate / Apply stages, run on GitHub runners (workflow tirith-ci-jenkns)
+name: 4 Jenkins (emulated)
+on:
+  push:
+    branches: [qa/tirith-ci-flows]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - run: terraform init -input=false
+      - name: "stage('Plan')"
+        run: terraform plan -out=tfplan -input=false; terraform show -json tfplan > plan.json
+      - name: "stage('Policy gate')"
+        env:
+          SG_API_TOKEN: ${{ secrets.SG_API_TOKEN }}
+          SG_ORG: demo-org
+          SG_BASE_URL: https://testapi.qa.stackguardian.io/api/v1
+          SG_DASHBOARD_URL: https://dash.qa.stackguardian.io
+        shell: bash
+        run: |
+          pip install "git+https://github.com/StackGuardian/tirith.git@1.2.1"
+          set +e
+          tirith platform check --workflow-id tirith-ci-jenkns --input-path plan.json --fail-on-error
+          code=$?
+          echo "tirith exit code: $code"
+          if [ $code -eq 3 ]; then echo "::error::Tirith: a policy refused this change."; exit 1
+          elif [ $code -ne 0 ]; then echo "::error::Tirith could not reach a verdict (exit $code)."; exit 1; fi
+      - name: "stage('Apply')"
+        run: terraform apply tfplan

@@ -1,0 +1,50 @@
+# Deploy II "Bitbucket Pipelines" tab: same steps, run on GitHub runners (workflow tirith-ci-bitbkt)
+name: 5 Bitbucket Pipelines (emulated)
+on:
+  push:
+    branches: [qa/tirith-ci-flows]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - run: terraform init -input=false
+      - run: terraform plan -out=tfplan -input=false
+      - run: terraform show -json tfplan > plan.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: |
+            tfplan
+            plan.json
+  policy-gate:
+    needs: [plan]
+    runs-on: ubuntu-latest
+    container: python:3.12        # Policy gate step, image: python:3.12
+    env:                          # export SG_ORG/SG_BASE_URL/SG_DASHBOARD_URL (+ SG_API_TOKEN secured variable)
+      SG_API_TOKEN: ${{ secrets.SG_API_TOKEN }}
+      SG_ORG: demo-org
+      SG_BASE_URL: https://testapi.qa.stackguardian.io/api/v1
+      SG_DASHBOARD_URL: https://dash.qa.stackguardian.io
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: plan }
+      - run: pip install "git+https://github.com/StackGuardian/tirith.git@1.2.1"
+      - run: tirith platform check --workflow-id tirith-ci-bitbkt --input-path plan.json --fail-on-error
+  apply:
+    needs: [plan, policy-gate]   # runs only if the check passes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - run: terraform init -input=false
+      - uses: actions/download-artifact@v4
+        with: { name: plan }
+      - run: terraform apply tfplan
